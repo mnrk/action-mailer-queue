@@ -22,21 +22,20 @@ module ActionMailer
       end
     
       def self.process!(options = {})
+        # the mails are fetched one-by-one so it can handle huge batches of mails
         self.for_send.with_processing_rules(:all, options.merge(:select => :id)).each { |q| self.find(q.id).deliver! }
       end
     
       def tmail=(mail)
         self.to = mail.to.uniq.join(",") unless mail.to.blank?
         self.from = mail.from.uniq.join(",") unless mail.from.blank?
-        self.subject = mail.subject unless mail.subject.blank?
+        self.subject = mail.subject
         self.content = mail.encoded
       end
     
       def to_tmail
+        # this is enough for parsing also tmail.to, tmail.from, tmail.subject
         tmail = TMail::Mail.parse(self.content)
-        tmail.to = self.to.split(",") unless self.to.blank?
-        tmail.from = self.from.split(",") unless self.from.blank?
-        tmail.subject = self.subject unless self.subject.blank?
         return tmail
       end
     
@@ -52,6 +51,7 @@ module ActionMailer
         self.update_attribute(:in_progress, true)
         mail = Mailer.deliver(self.to_tmail)
         if ActionMailer::Queue.destroy_message_after_deliver
+          # new feature: mail can be deleted after deliver
           self.destroy
         else
           self.message_id = mail.message_id
@@ -62,8 +62,11 @@ module ActionMailer
         end
         return mail
       rescue => err
+        # use the same exception so it preserves its original message and trace
         raise err if [ActionMailer::Queue::Store::MailAlreadySent, ActionMailer::Queue::Store::MailSendingInProgress].include?(err.class)
         self.in_progress = false
+        # This is because Ruby 1.8.7. has problems with ts_mail, see
+        # http://jira.public.thoughtworks.org/browse/CCRB-187
         self.attempts += 1
         self.last_error = err.to_s
         self.last_attempt_at = Time.now
